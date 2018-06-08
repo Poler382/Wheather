@@ -1,9 +1,38 @@
 import math._
 import breeze.linalg._
 
+/*
+affine
+ReLU
+LeakyLeLU
+tanh
+Sigmoid
+Pooling
+Convolution
+BacthNormalization 未完成　arrayVerを作る
+AdamDM
+AdamDV
+object Image 
+BacthNormalization3 Array.ver
+*/
+
 abstract class Layer {
   def forward(x:Array[Double]) : Array[Double]
+  def forward(x:Array[Array[Double]]) : Array[Array[Double]]={
+    var xs=new Array[Array[Double]](x.size)
+    for(i <- 0 until x.size){
+      xs(i)=forward(x(i))
+    }
+    xs
+  }
   def backward(x:Array[Double]) : Array[Double]
+  def backward(x:Array[Array[Double]]) :Array[Array[Double]]={
+    var xs=new Array[Array[Double]](x.size)
+    for(i <- x.size-1 to 0 by -1){
+      xs(i)=backward(x(i))
+    }
+    xs
+  }
   def update() : Unit
   def reset() : Unit
   def load(fn:String) {}
@@ -147,17 +176,41 @@ class ReLU() extends Layer {
     (0 until d.size).map(i => if(y(i) > 0) d(i) else 0d).toArray
   }
 
-  def update() {
-    reset()
-  }
-
-  def reset() {
-    ys = List[Array[Double]]()
-  }
+  def update() {reset()}
+  def reset() {ys = List[Array[Double]]()}
 
   override def save(fn:String){}
   override def load(fn:String){}
 
+}
+
+class LeakyReLU() extends Layer{
+  var ys = List[Array[Double]]()
+  def push(y:Array[Double]) = { ys ::= y; y }
+  def pop() = { val y = ys.head; ys = ys.tail; y }
+
+  def forward(x:Array[Double]) = {
+    var returny = new Array[Double](x.size)
+    for(i <- 0 until x.size){
+      if(x(i) > 0){ 
+        returny(i) = x(i) 
+      }else{
+        returny(i) = x(i)*0.2
+      }
+    }
+    push(returny)
+  }
+
+  def backward(d:Array[Double]) = {
+    val y = pop()
+    (0 until d.size).map(i => if(y(i) > 0) d(i) else d(i)*0.2).toArray
+  }
+
+  def update() {reset()}
+  def reset() {ys = List[Array[Double]]()}
+
+  override def save(fn:String){}
+  override def load(fn:String){}
 }
 
 
@@ -272,11 +325,7 @@ class Pooling(val BW:Int, val IC:Int, val IH:Int, val IW:Int) extends Layer{
 
   override def save(fn:String){}
   override def load(fn:String){}
-
-
 }
-
-
 
 
 class Convolution(
@@ -380,7 +429,193 @@ class Convolution(
     d_k=Array.ofDim[Double](O,I,kw*kw)
   }
 }
+/*
+//D:各データの個数　データ数n
+class BatchNormalization(val D:Int,val n: Int) extends Layer{
+  var xn = D
+  var gamma   = DenseVector.ones[Double](D)
+  var beta    = DenseVector.zeros[Double](D)
+  var d_beta  = DenseVector.zeros[Double](D)
+  var d_gamma = DenseVector.zeros[Double](D)
+  var mu      = DenseVector.zeros[Double](D)
+  var eps     = 0.00000001
+  var sigma   = DenseVector.zeros[Double](D)
+  var x_h     = new Array[DenseVector[Double]](D)
+  var x_m     = new Array[DenseVector[Double]](D)
+  var xmu     = new Array[DenseVector[Double]](D)
+  var dg      = DenseVector.zeros[Double](xn)
+  var db      = DenseVector.zeros[Double](xn)
+  var count   = 0
 
+  def forward(x:Array[Double] )={x}
+
+  def backward(x:Array[Double] )={x}
+
+
+  def forward2(xs:Array[DenseVector[Double]] )={
+
+    
+    var y = new Array[DenseVector[Double]](xs.size)
+
+    for(i <- 0 until xs.size){
+      for (j <- 0 until xn){
+        mu(j)+=xs(i)(j)/xs.size
+      }
+    }
+
+    x_m = new Array[DenseVector[Double]](xs.size)
+    
+    for(i <- 0 until xs.size){
+      x_m(i)=DenseVector.zeros[Double](xn)
+      for(j <- 0 until xn){
+        x_m(i)(j) = xs(i)(j) - mu(j)
+  
+        sigma(j) += x_m(i)(j)* x_m(i)(j)/xs.size
+      }
+    }
+
+    x_h = new Array[DenseVector[Double]](xs.size)
+    for(i <- 0 until xs.size){
+      y(i)=DenseVector.zeros[Double](xn)
+      x_h(i)=DenseVector.zeros[Double](xn)
+      for (j <- 0 until xn){
+        x_h(i)(j)= (x_m(i)(j))/math.sqrt(sigma(j)+eps)
+        y(i)(j)=gamma(j)*x_h(i)(j)+beta(j)
+      }
+    }
+    y
+  }
+
+
+
+//たてよこの行列を潰して各データのsumに変える
+  def sumMatrix(in:Array[DenseVector[Double]])={
+    var m  = DenseVector.zeros[Double](D)
+    for(j <- 0 until D){
+      for(i <- 0 until n){
+        m(j) += in(i)(j)
+      }
+    }
+    m
+  }
+
+  def backward2(d:Array[DenseVector[Double]])={
+
+   
+
+    var d_beta = sumMatrix(d)
+    var dx = new Array[DenseVector[Double]](n)
+  
+    for(i <- 0 until n){
+      dx(i) = DenseVector.zeros[Double](D)
+    }
+
+    for(j <- 0 until D){
+      for(i <- 0 until n){
+        d_gamma(j) += d(i)(j) * x_h(i)(j)
+      }
+    }
+
+    //各次元ごとに計算
+    for(j <- 0 until D ){
+      var d2 = 0d
+      var d1 = DenseVector.zeros[Double](n)
+      for(i <- 0 until n ){
+        d1(i) = gamma(j) * d(i)(j)
+        d2 += x_m(i)(j) *d1(i)
+      }
+      
+      var d3 = - d2 / (sigma(j)+eps) 
+      var d4 = d3 / (2*sqrt(sigma(j)+eps))
+
+      var d8 = 0d
+      var d6 = DenseVector.zeros[Double](n)
+      var d7 = DenseVector.zeros[Double](n)
+     
+      for(i <- 0 until n){
+        var d5 = 1 / n.toDouble *d4
+        d6(i) = 2 * x_m(i)(j) * d5
+        d7(i) = d1(i) * 1/sqrt(sigma(j)+eps)
+        d8 -= d6(i) + d7(i)
+      }
+      for(i <- 0 until n){
+        var d9 = 1 / n.toDouble * d8
+        var d10 = d6(i)+d7(i)
+        dx(i)(j) = d9 + d10
+      }
+
+    }
+    dx
+  }
+  var adam_b = new Adam_DV(xn)
+  var adam_g = new Adam_DV(xn)
+  def update(){
+    adam_b.update(beta,d_beta,n)
+    adam_g.update(gamma,d_gamma,n)
+    reset()
+  }
+  def reset(){
+    db = DenseVector.zeros[Double](xn)
+    dg = DenseVector.zeros[Double](xn)
+    count=0
+  }
+
+  override def save(fn:String){}
+  override def load(fn:String){}
+
+}
+
+ */
+
+class Adam_DM(val rows:Int, val cols:Int) {
+  val eps = 0.0002
+  val delta = 1e-8
+  val rho1 = 0.5
+  val rho2 = 0.999
+  var rho1t = 1d
+  var rho2t = 1d
+  var s = DenseMatrix.zeros[Double](rows,cols)
+  var r = DenseMatrix.zeros[Double](rows,cols)
+
+  def update(K:DenseMatrix[Double], dK:DenseMatrix[Double],count:Int) = {
+    rho1t *= rho1
+    rho2t *= rho2
+    val rho1tr = 1 / (1 - rho1t)
+    val rho2tr = 1 / (1 - rho2t)
+    for(i <- 0 until K.rows; j <- 0 until K.cols) {
+      s(i,j) = rho1 * s(i,j) + (1 - rho1) * dK(i,j)
+      r(i,j) = rho2 * r(i,j) + (1 - rho2) * dK(i,j) * dK(i,j)
+      val d = (s(i,j) * rho1tr) / (math.sqrt(r(i,j) * rho2tr) + delta)
+      K(i,j) = K(i,j) - eps/count * d
+    }
+  }
+}
+class Adam_DV(val n:Int) {
+  val eps = 0.0002
+  val delta = 1e-8
+  val rho1 = 0.5
+  val rho2 = 0.999
+  var rho1t = 1d
+  var rho2t = 1d
+  var s = DenseVector.zeros[Double](n)
+  var r = DenseVector.zeros[Double](n)
+
+  def update(K:DenseVector[Double], dK:DenseVector[Double],count:Int) = {
+    rho1t *= rho1
+    rho2t *= rho2
+    val rho1tr = 1 / (1 - rho1t)
+    val rho2tr = 1 / (1 - rho2t)
+    for(i <- 0 until K.size) {
+      s(i) = rho1 * s(i) + (1 - rho1) * dK(i)
+      r(i) = rho2 * r(i) + (1 - rho2) * dK(i) * dK(i)
+      val d = (s(i) * rho1tr) / (math.sqrt(r(i) * rho2tr) + delta)
+      K(i) = K(i) - eps/count * d
+    }
+  }
+}
+
+
+ 
 
 object Image {
   def rgb(im : java.awt.image.BufferedImage, i:Int, j:Int) = {
@@ -467,4 +702,284 @@ object Image {
     }
     output.reverse.toArray.map(_.map(_.map(_.toInt)))
   }
+
+
+
 }
+
+//Array version
+//n個データがきたら更新する
+//D:各データの個数　データ数n
+class BatchNormalization3(val D:Int,val n: Int) extends Layer{
+  var xn = D
+  var gamma   = new Array[Double](D).map(_ => 1d)
+  var beta    = new Array[Double](D).map(_ => 0d)
+  var d_beta  = new Array[Double](D).map(_ => 0d)
+  var d_gamma = new Array[Double](D).map(_ => 0d)
+  var mu      = new Array[Double](D).map(_ => 0d)
+  var eps     = 0.00000001
+  var sigma   = new Array[Double](D).map(_ => 0d)
+  var x_h     = new Array[Array[Double]](D).map(_.map(_ => 0d))
+  var x_m     = new Array[Array[Double]](D).map(_.map(_ => 0d))
+  var xmu     = new Array[Array[Double]](D).map(_.map(_ => 0d))
+  var dg      = new Array[Double](xn)
+  var db      = new Array[Double](xn)
+  var count   = 0
+
+  def forward(xs:Array[Double])=xs
+  def backward(xs:Array[Double])=xs
+
+  override def forward(xs:Array[Array[Double]] )={
+    var y = new Array[Array[Double]](xs.size)
+
+    for(i <- 0 until xs.size){
+      for (j <- 0 until xn){
+        mu(j)+=xs(i)(j)/xs.size
+      }
+    }
+
+    x_m = new Array[Array[Double]](xs.size)
+    
+    for(i <- 0 until xs.size){
+      x_m(i)=new Array[Double](xn).map(_ => 0d)
+      for(j <- 0 until xn){
+        x_m(i)(j) = xs(i)(j) - mu(j)
+  
+        sigma(j) += x_m(i)(j)* x_m(i)(j)/xs.size
+      }
+    }
+
+    x_h = new Array[Array[Double]](xs.size).map(_.map(_ => 0d))
+    for(i <- 0 until xs.size){
+      y(i)   = new Array[Double](xn).map(_ => 0d)
+      x_h(i) = new Array[Double](xn).map(_ => 0d)
+      for (j <- 0 until xn){
+        x_h(i)(j)= (x_m(i)(j))/math.sqrt(sigma(j)+eps)
+        y(i)(j)=gamma(j)*x_h(i)(j)+beta(j)
+      }
+    }
+    y
+  }
+
+
+
+  //たてよこの行列を潰して各データのsumに変える
+  def sumMatrix(in:Array[Array[Double]])={
+    var m  = new Array[Double](D)
+    for(j <- 0 until D){
+      for(i <- 0 until n){
+        m(j) += in(i)(j)
+      }
+    }
+    m
+  }
+
+  override def backward(d:Array[Array[Double]])={
+
+    var d_beta = sumMatrix(d)
+    var dx = new Array[Array[Double]](n)
+  
+    for(i <- 0 until n){
+      dx(i) = new Array[Double](D).map(_ => 0d)
+    }
+
+    for(j <- 0 until D){
+      for(i <- 0 until n){
+        d_gamma(j) += d(i)(j) * x_h(i)(j)
+      }
+    }
+
+    //各次元ごとに計算
+    for(j <- 0 until D ){
+      var d2 = 0d
+      var d1 = new Array[Double](n)
+      for(i <- 0 until n ){
+        d1(i) = gamma(j) * d(i)(j)
+        d2 += x_m(i)(j) *d1(i)
+      }
+      
+      var d3 = - d2 / (sigma(j)+eps) 
+      var d4 = d3 / (2*sqrt(sigma(j)+eps))
+
+      var d8 = 0d
+      var d6 = new Array[Double](n)
+      var d7 = new Array[Double](n)
+     
+      for(i <- 0 until n){
+        var d5 = 1 / n.toDouble *d4
+        d6(i) = 2 * x_m(i)(j) * d5
+        d7(i) = d1(i) * 1/sqrt(sigma(j)+eps)
+        d8 -= d6(i) + d7(i)
+      }
+      for(i <- 0 until n){
+        var d9 = 1 / n.toDouble * d8
+        var d10 = d6(i)+d7(i)
+        dx(i)(j) = d9 + d10
+      }
+
+    }
+    dx
+  }
+  var adam_b = new Adam_D(xn)
+  var adam_g = new Adam_D(xn)
+  def update(){
+    adam_b.update(beta,d_beta,n)
+    adam_g.update(gamma,d_gamma,n)
+    reset()
+  }
+  def reset(){
+    db = new Array[Double](xn)
+    dg = new Array[Double](xn)
+    count=0
+  }
+
+  override def save(fn:String){}
+  override def load(fn:String){}
+
+}
+
+class BNsaki(val xn:Int) extends Layer {
+  val epsilon=10E-8
+  var beta = Array.ofDim[Double](xn)
+  var gamma = Array.ofDim[Double](xn)
+  for(i <- 0 until xn){gamma(i)=1d}
+  var mu = Array.ofDim[Double](xn)
+  var sigma = Array.ofDim[Double](xn)
+  var x_h = new Array[Array[Double]](1)
+  var x_m = new Array[Array[Double]](1)
+  var dg =  Array.ofDim[Double](xn)
+  var db =  Array.ofDim[Double](xn)
+  var count=0
+  override def forward(xs:Array[Array[Double]])={
+    var y = new Array[Array[Double]](xs.size)
+ 
+    for(i <- 0 until xs.size){
+      for (j <- 0 until xn){
+        mu(j)+=xs(i)(j)/xs.size
+      }
+    }
+    x_m=new Array[Array[Double]](xs.size)
+    for(i <- 0 until xs.size){
+      x_m(i)=Array.ofDim[Double](xn)
+      for(j <- 0 until xn){
+        x_m(i)(j) = xs(i)(j)-mu(j)
+        sigma(j) += x_m(i)(j)* x_m(i)(j)/xs.size
+      }
+    }
+    x_h=new Array[Array[Double]](xs.size)
+    for(i <- 0 until xs.size){
+      y(i)=Array.ofDim[Double](xn)
+      x_h(i)=Array.ofDim[Double](xn)
+      for (j <- 0 until xn){
+        x_h(i)(j)= (x_m(i)(j))/math.sqrt(sigma(j)+epsilon)
+        y(i)(j)=gamma(j)*x_h(i)(j)+beta(j)
+      }
+    }
+    y
+  }
+
+  def forward(xs:Array[Double])=xs
+  def backward(xs:Array[Double])=xs
+  override def backward(ds:Array[Array[Double]])={
+    var dx = new Array[Array[Double]](ds.size)
+    var d1 = new Array[Array[Double]](ds.size)
+    var d2 = Array.ofDim[Double](xn)
+    var d6 = new Array[Array[Double]](ds.size)
+    var d7 = new Array[Array[Double]](ds.size)
+    var d8 = Array.ofDim[Double](xn)
+    var d10 = new Array[Array[Double]](ds.size)
+
+  for(i <- 0 until ds.size){
+    d6(i)=Array.ofDim[Double](xn)
+    d7(i)=Array.ofDim[Double](xn)
+    d1(i)=Array.ofDim[Double](xn)
+      for(j <- 0 until xn){
+        d1(i)(j)=ds(i)(j)*gamma(j)
+        d2(j) += d1(i)(j)*x_m(i)(j)
+      }
+    }
+   for(j <- 0 until xn){
+     var d3=d2(j)*(-1d)/(sigma(j)+epsilon)
+     var d4=(1d/(2*(math.sqrt(sigma(j)+epsilon))))*d3
+     for(i <- 0 until ds.size){
+      
+       d10(i)=Array.ofDim[Double](xn)
+       dx(i)=Array.ofDim[Double](xn)
+       var d5=d4/ds.size
+       d6(i)(j)=2*x_m(i)(j)*d5
+       d7(i)(j)=d1(i)(j)/(math.sqrt(sigma(j)+epsilon))
+       d8(j) += -(d6(i)(j)+d7(i)(j))
+     }
+   }
+   for(i <- 0 until ds.size;j <- 0 until xn){
+     var d9 = d8(j)/ds.size
+     d10(i)(j) = d6(i)(j)+d7(i)(j)
+     dx(i)(j) = d9+d10(i)(j)
+     dg(j) += ds(i)(j) * x_h(i)(j)
+     db(j) += ds(i)(j)
+   }
+   count=ds.size
+   dx
+  }
+
+  var adam_b = new Adam_D(xn)
+  var adam_g = new Adam_D(xn)
+  def update(){
+    adam_b.update(beta,db,count)
+    adam_g.update(gamma,dg,count)
+    reset()
+  }
+  def reset(){
+    db = Array.ofDim[Double](xn)
+    dg = Array.ofDim[Double](xn)
+    count=0
+  }
+}
+
+class Adam_DA(val rows:Int, val cols:Int) {
+  val eps = 0.0002
+  val delta = 1e-8
+  val rho1 = 0.5
+  val rho2 = 0.999
+  var rho1t = 1d
+  var rho2t = 1d
+  var s = Array.ofDim[Double](rows,cols)
+  var r = Array.ofDim[Double](rows,cols)
+
+  def update(K:Array[Array[Double]], dK:Array[Array[Double]],count:Int) = {
+    rho1t *= rho1
+    rho2t *= rho2
+    val rho1tr = 1 / (1 - rho1t)
+    val rho2tr = 1 / (1 - rho2t)
+    for(i <- 0 until K.size; j <- 0 until K(0).size) {
+      s(i)(j) = rho1 * s(i)(j) + (1 - rho1) * dK(i)(j)
+      r(i)(j) = rho2 * r(i)(j) + (1 - rho2) * dK(i)(j) * dK(i)(j)
+      val d = (s(i)(j) * rho1tr) / (math.sqrt(r(i)(j) * rho2tr) + delta)
+      K(i)(j) = K(i)(j) - eps/count * d
+    }
+  }
+}
+class Adam_D(val n:Int) {
+  val eps = 0.0002
+  val delta = 1e-8
+  val rho1 = 0.5
+  val rho2 = 0.999
+  var rho1t = 1d
+  var rho2t = 1d
+  var s = new Array[Double](n)
+  var r = new Array[Double](n)
+
+  def update(K:Array[Double], dK:Array[Double],count:Int) = {
+    rho1t *= rho1
+    rho2t *= rho2
+    val rho1tr = 1 / (1 - rho1t)
+    val rho2tr = 1 / (1 - rho2t)
+    for(i <- 0 until K.size) {
+      s(i) = rho1 * s(i) + (1 - rho1) * dK(i)
+      r(i) = rho2 * r(i) + (1 - rho2) * dK(i) * dK(i)
+      val d = (s(i) * rho1tr) / (math.sqrt(r(i) * rho2tr) + delta)
+      K(i) = K(i) - eps/count * d
+    }
+  }
+}
+
